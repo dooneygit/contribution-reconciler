@@ -4,6 +4,7 @@ import subprocess
 import webbrowser
 from datetime import date, datetime, time, timedelta
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from itertools import groupby
 from pathlib import Path
 
 REPO_URL = "https://github.com/dooneygit/contrib-recon-logs.git"
@@ -28,7 +29,12 @@ PAGE = """<!doctype html>
 <script>
   document.getElementById("date").valueAsDate = new Date();
   document.getElementById("push").onclick = async () => {
-    if (!confirm("Push all local commits to GitHub?")) return;
+    const pending = await (await fetch("/pending")).text();
+    if (!pending) {
+      document.getElementById("result").textContent = "Nothing to push";
+      return;
+    }
+    if (!confirm("Push these commits to GitHub?\\n\\n" + pending)) return;
     const res = await fetch("/push", { method: "POST" });
     document.getElementById("result").textContent = await res.text();
   };
@@ -59,8 +65,22 @@ def add_commits(day, count, message):
         )
 
 
+def pending_summary():
+    # Unpushed commits, oldest first, with consecutive same-day same-message commits grouped into one batch.
+    # No check: git log fails before the first commit, which just means nothing is pending.
+    log = subprocess.run(
+        ["git", "-C", str(REPO_DIR), "log", "HEAD", "--not", "--remotes", "--reverse",
+         "--date=short", "--format=%ad%x09%s"],
+        capture_output=True, text=True,
+    ).stdout.splitlines()
+    batches = [(line.split("\t", 1), len(list(group))) for line, group in groupby(log)]
+    return "\n".join(f"{msg} x{n}  ({day})" for (day, msg), n in batches)
+
+
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
+        if self.path == "/pending":
+            return self.reply(200, pending_summary())
         self.reply(200, PAGE, "text/html")
 
     def do_POST(self):
