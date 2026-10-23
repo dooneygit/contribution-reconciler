@@ -22,11 +22,17 @@ PAGE = """<!doctype html>
 <input id="date" type="date">
 <input id="count" type="number" min="1" max="1000" value="1">
 <input id="message" type="text" placeholder="Commit message (default: contribution)">
-<button id="add">Add</button>
+<button id="commit">Commit</button>
+<button id="push">Push</button>
 <div id="result"></div>
 <script>
   document.getElementById("date").valueAsDate = new Date();
-  document.getElementById("add").onclick = async () => {
+  document.getElementById("push").onclick = async () => {
+    if (!confirm("Push all local commits to GitHub?")) return;
+    const res = await fetch("/push", { method: "POST" });
+    document.getElementById("result").textContent = await res.text();
+  };
+  document.getElementById("commit").onclick = async () => {
     const res = await fetch("/add", {
       method: "POST",
       body: JSON.stringify({
@@ -58,6 +64,8 @@ class Handler(BaseHTTPRequestHandler):
         self.reply(200, PAGE, "text/html")
 
     def do_POST(self):
+        if self.path == "/push":
+            return self.push()
         if self.path != "/add":
             return self.reply(404, "Not found")
         try:
@@ -74,6 +82,17 @@ class Handler(BaseHTTPRequestHandler):
         except subprocess.CalledProcessError as e:
             return self.reply(500, f"git failed: {e.stderr.strip()}")
         self.reply(200, f"Added {count} commit(s) on {day} (local only, not pushed)")
+
+    def push(self):
+        try:
+            # -u origin HEAD also works for the first push to an empty remote.
+            subprocess.run(
+                ["git", "-C", str(REPO_DIR), "push", "-u", "origin", "HEAD"],
+                check=True, capture_output=True, text=True,
+            )
+        except subprocess.CalledProcessError as e:
+            return self.reply(500, f"git push failed: {e.stderr.strip()}")
+        self.reply(200, "Pushed to GitHub")
 
     def reply(self, status, text, content_type="text/plain"):
         data = text.encode()
